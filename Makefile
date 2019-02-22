@@ -8,10 +8,10 @@ build: darwin
 all: darwin linux 
 
 darwin:
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) -a -o bin/aries-virgo.darwin *.go
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) -a -o bin/aries-avalon.darwin *.go
 
 linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo -o bin/aries-virgo.linux *.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo -o bin/aries-avalon.linux *.go
 
 clean:
 	$(GOCLEAN)
