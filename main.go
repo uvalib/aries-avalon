@@ -169,9 +169,9 @@ func main() {
 	log.Printf("Read configuration...")
 	var port int
 	flag.IntVar(&port, "port", 8080, "Aries Avalon port (default 8080)")
-	flag.StringVar(&solrURL, "solrurl", "http://solr.lib.virginia.edu:8082/solr", "Solr base URL")
-	flag.StringVar(&solrCore, "solrcore", "core", "Solr core")
-	flag.StringVar(&avalonURL, "avalonurl", "https://search.lib.virginia.edu", "Avalon URL")
+	flag.StringVar(&solrURL, "solrurl", "http://avalon.lib.virginia.edu:8983/solr", "Avalon Solr base URL")
+	flag.StringVar(&solrCore, "solrcore", "avalon", "Avalon Solr core")
+	flag.StringVar(&avalonURL, "avalonurl", "http://avalon.lib.virginia.edu", "Avalon URL")
 	flag.Parse()
 
 	log.Printf("Setup routes...")
