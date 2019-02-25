@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,7 +27,9 @@ type aries struct {
 	Identifiers []string     `json:"identifier,omitempty"`
 	ServiceURL  []serviceURL `json:"service_url,omitempty"`
 	AccessURL   []string     `json:"access_url,omitempty"`
+	AdminURL    []string     `json:"administrative_url,omitempty"`
 	MetadataURL []string     `json:"metadata_url,omitempty"`
+	MasterFile  []string     `json:"master_file,omitempty"`
 }
 
 type serviceURL struct {
@@ -51,8 +52,17 @@ type solrHeader struct {
 
 // solrResponse contains the details of hits from a solr query
 type solrResponse struct {
-	NumFound int `json:"numFound"`
-	Start    int `json:"start"`
+	NumFound int       `json:"numFound"`
+	Start    int       `json:"start"`
+	Docs     []solrDoc `json:"docs"`
+}
+
+type solrDoc struct {
+	ID             string   `json:"id"`
+	Model          []string `json:"has_model_ssim"`
+	PartOf         []string `json:"isPartOf_ssim"`
+	FileLocation   string   `json:"file_location_ssi"`
+	IdentifierSSIM []string `json:"identifier_ssim"`
 }
 
 // favHandler is a dummy handler to silence browser API requests that look for /favicon.ico
@@ -88,12 +98,9 @@ func ariesPing(c *gin.Context) {
 // ariesLookup will query APTrust for information on the supplied identifer
 func ariesLookup(c *gin.Context) {
 	passedID := c.Param("id")
-	var qps []string
-	qps = append(qps, url.QueryEscape(fmt.Sprintf("id:\"%s\"", passedID)))
-	qps = append(qps, url.QueryEscape(fmt.Sprintf("alternate_id_facet:\"%s\"", passedID)))
-	qps = append(qps, url.QueryEscape(fmt.Sprintf("barcode_facet:\"%s\"", passedID)))
-	fl := "&fl=id,shadowed_location_facet,marc_display,alternate_id_facet,barcode_facet,feature_facet"
-	urlStr := fmt.Sprintf("%s/%s/select?q=%s&wt=json&indent=true%s", solrURL, solrCore, strings.Join(qps, "+"), fl)
+	qs := url.QueryEscape(fmt.Sprintf("id:\"%s\"", passedID))
+	fl := "&fl=id,identifier_ssim,file_location_ssi,has_model_ssim,isPartOf_ssim"
+	urlStr := fmt.Sprintf("%s/%s/select?q=%s&wt=json&indent=true%s", solrURL, solrCore, qs, fl)
 	respStr, err := getAPIResponse(urlStr)
 	if err != nil {
 		log.Printf("Query for %s FAILED: %s", passedID, err.Error())
@@ -101,7 +108,6 @@ func ariesLookup(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Parsing solr response for #{passedID}")
 	var resp solrFullResponse
 	marshallErr := json.Unmarshal([]byte(respStr), &resp)
 	if marshallErr != nil {
@@ -110,21 +116,52 @@ func ariesLookup(c *gin.Context) {
 		return
 	}
 
-	if resp.ResponseHeader.Status != 0 {
-		log.Printf("Failed response for %s: %d", passedID, resp.ResponseHeader.Status)
-		c.String(http.StatusNotFound, "%s not found", passedID)
-		return
+	if resp.Response.NumFound == 0 {
+		log.Printf("Query for ID=%s had no hits; check in identifier_ssim", passedID)
+		qs = url.QueryEscape(fmt.Sprintf("identifier_ssim:\"%s\"", passedID))
+		urlStr = fmt.Sprintf("%s/%s/select?q=%s&wt=json&indent=true%s", solrURL, solrCore, qs, fl)
+		respStr, _ = getAPIResponse(urlStr)
+		marshallErr := json.Unmarshal([]byte(respStr), &resp)
+		if marshallErr != nil {
+			log.Printf("Unable to parse response: %s", marshallErr.Error())
+			c.String(http.StatusNotFound, "%s not found", passedID)
+			return
+		}
+		if resp.Response.NumFound == 0 {
+			log.Printf("Query for identifier_ssim=%s had no hits", passedID)
+			c.String(http.StatusNotFound, "%s not found", passedID)
+			return
+		}
 	}
 
-	if resp.Response.NumFound == 0 {
-		log.Printf("Query for %s had no hits", passedID)
-		c.String(http.StatusNotFound, "%s not found", passedID)
+	if resp.Response.NumFound > 1 {
+		log.Printf("Query for %s had too many hits", passedID)
+		c.String(http.StatusBadRequest, "%s has too many hits. Query: %s", passedID, urlStr)
 		return
 	}
 
 	var out aries
-	// out.Identifiers = append(out.Identifiers, doc.ID)
+	doc := resp.Response.Docs[0]
+	out.Identifiers = append(out.Identifiers, doc.ID)
+	for _, altID := range doc.IdentifierSSIM {
+		out.Identifiers = append(out.Identifiers, altID)
+	}
+	if doc.FileLocation != "" {
+		out.MasterFile = append(out.MasterFile, doc.FileLocation)
+	}
+	if doc.Model[0] == "MediaObject" {
+		out.MetadataURL = append(out.MetadataURL, fmt.Sprintf("%s/media_objects/%s/content/descMetadata", avalonURL, doc.ID))
+		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s", avalonURL, doc.ID))
+		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/edit", avalonURL, doc.ID))
+	} else {
+		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s/section/%s", avalonURL, doc.PartOf[0], doc.ID))
+		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/section/%s/edit", avalonURL, doc.PartOf[0], doc.ID))
+	}
 
+	svcURL := serviceURL{
+		URL:      fmt.Sprintf("%s/%s/select?q=%s", solrURL, solrCore, qs),
+		Protocol: "avalon-index"}
+	out.ServiceURL = append(out.ServiceURL, svcURL)
 	c.JSON(http.StatusOK, out)
 }
 
