@@ -24,12 +24,13 @@ var avalonURL string
 
 // aries is the structure of the response returned by /api/aries/:id
 type aries struct {
-	Identifiers []string     `json:"identifier,omitempty"`
-	ServiceURL  []serviceURL `json:"service_url,omitempty"`
-	AccessURL   []string     `json:"access_url,omitempty"`
-	AdminURL    []string     `json:"administrative_url,omitempty"`
-	MetadataURL []string     `json:"metadata_url,omitempty"`
-	MasterFile  []string     `json:"master_file,omitempty"`
+	Identifiers    []string     `json:"identifier,omitempty"`
+	ServiceURL     []serviceURL `json:"service_url,omitempty"`
+	AccessURL      []string     `json:"access_url,omitempty"`
+	AdminURL       []string     `json:"administrative_url,omitempty"`
+	MetadataURL    []string     `json:"metadata_url,omitempty"`
+	MasterFile     []string     `json:"master_file,omitempty"`
+	DerivativeFile []string     `json:"derivative_file,omitempty"`
 }
 
 type serviceURL struct {
@@ -63,6 +64,7 @@ type solrDoc struct {
 	PartOf         []string `json:"isPartOf_ssim"`
 	FileLocation   string   `json:"file_location_ssi"`
 	IdentifierSSIM []string `json:"identifier_ssim"`
+	DerivativeFile string   `json:"derivativeFile_ssi"`
 }
 
 // favHandler is a dummy handler to silence browser API requests that look for /favicon.ico
@@ -149,19 +151,36 @@ func ariesLookup(c *gin.Context) {
 	if doc.FileLocation != "" {
 		out.MasterFile = append(out.MasterFile, doc.FileLocation)
 	}
-	if doc.Model[0] == "MediaObject" {
-		out.MetadataURL = append(out.MetadataURL, fmt.Sprintf("%s/media_objects/%s/content/descMetadata", avalonURL, doc.ID))
-		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s", avalonURL, doc.ID))
-		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/edit", avalonURL, doc.ID))
-	} else {
-		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s/section/%s", avalonURL, doc.PartOf[0], doc.ID))
-		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/section/%s/edit", avalonURL, doc.PartOf[0], doc.ID))
-	}
 
 	svcURL := serviceURL{
 		URL:      fmt.Sprintf("%s/%s/select?q=%s", solrURL, solrCore, qs),
 		Protocol: "avalon-index"}
 	out.ServiceURL = append(out.ServiceURL, svcURL)
+
+	if doc.Model[0] == "MediaObject" {
+		// MediaObjects have descMetadata
+		out.MetadataURL = append(out.MetadataURL, fmt.Sprintf("%s/media_objects/%s/content/descMetadata", avalonURL, doc.ID))
+		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s", avalonURL, doc.ID))
+		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/edit", avalonURL, doc.ID))
+	} else {
+		// Master files are have no metadata, are nested under their parent URL and can have derivatives
+		out.AccessURL = append(out.AccessURL, fmt.Sprintf("%s/media_objects/%s/section/%s", avalonURL, doc.PartOf[0], doc.ID))
+		out.AdminURL = append(out.AdminURL, fmt.Sprintf("%s/media_objects/%s/section/%s/edit", avalonURL, doc.PartOf[0], doc.ID))
+
+		qs = url.QueryEscape(fmt.Sprintf("isDerivationOf_ssim:\"%s\"", doc.ID))
+		fl = "&fl=id,derivativeFile_ssi"
+		urlStr = fmt.Sprintf("%s/%s/select?q=%s&wt=json&indent=true%s", solrURL, solrCore, qs, fl)
+		respStr, _ = getAPIResponse(urlStr)
+		marshallErr = json.Unmarshal([]byte(respStr), &resp)
+		if marshallErr == nil {
+			for _, d := range resp.Response.Docs {
+				if d.DerivativeFile != "" {
+					out.DerivativeFile = append(out.DerivativeFile, d.DerivativeFile)
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, out)
 }
 
